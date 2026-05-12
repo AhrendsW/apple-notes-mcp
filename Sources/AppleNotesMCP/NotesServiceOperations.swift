@@ -171,6 +171,9 @@ extension NotesService {
                     scriptBody: Self.scriptMoveNote,
                     input: .object([
                         "appleNoteId": .string(appleId),
+                        "title": .string(note.title),
+                        "sourceAccountName": note.accountName.map(MCPValue.string) ?? .null,
+                        "sourceFolderPath": note.folderPath.map(MCPValue.string) ?? .null,
                         "targetAccountName": .string(targetAccount),
                         "targetFolderPath": .string(targetFolder),
                         "createFolderIfMissing": .bool(createFolderIfMissing)
@@ -328,11 +331,16 @@ extension NotesService {
                 scriptBody: Self.scriptUpdateNote,
                 input: .object([
                     "appleNoteId": .string(appleId),
+                    "title": .string(note.title),
+                    "accountName": note.accountName.map(MCPValue.string) ?? .null,
+                    "folderPath": note.folderPath.map(MCPValue.string) ?? .null,
                     "bodyHTML": .string(finalHTML)
                 ])
             )
             let object = data.objectValue ?? [:]
-            note.title = object["title"]?.stringValue ?? note.title
+            if let title = object["title"]?.stringValue, !title.isEmpty {
+                note.title = title
+            }
             note.accountName = object["accountName"]?.stringValue ?? note.accountName
             note.folderPath = object["folderPath"]?.stringValue ?? note.folderPath
             note.bodyHTML = object["bodyHTML"]?.stringValue ?? finalHTML
@@ -390,6 +398,9 @@ extension NotesService {
             scriptBody: Self.scriptMoveNote,
             input: .object([
                 "appleNoteId": .string(appleId),
+                "title": .string(note.title),
+                "sourceAccountName": note.accountName.map(MCPValue.string) ?? .null,
+                "sourceFolderPath": note.folderPath.map(MCPValue.string) ?? .null,
                 "targetAccountName": .string(targetAccount),
                 "targetFolderPath": .string(targetFolder),
                 "createFolderIfMissing": .bool(createFolderIfMissing)

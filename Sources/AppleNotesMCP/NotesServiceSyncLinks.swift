@@ -145,7 +145,13 @@ extension NotesService {
             _ = try await jxa.run(
                 operation: "notes_attach_file",
                 scriptBody: Self.scriptUpdateNote,
-                input: .object(["appleNoteId": .string(appleId), "bodyHTML": .string(newHTML)])
+                input: .object([
+                    "appleNoteId": .string(appleId),
+                    "title": .string(note.title),
+                    "accountName": note.accountName.map(MCPValue.string) ?? .null,
+                    "folderPath": note.folderPath.map(MCPValue.string) ?? .null,
+                    "bodyHTML": .string(newHTML)
+                ])
             )
             note.bodyHTML = newHTML
             note.bodyMarkdown = (note.bodyMarkdown ?? "") + "\n\n" + linkMarkdown
@@ -185,27 +191,64 @@ extension NotesService {
         let target = try resolveNote(noteId: args.string("targetNoteId"), title: args.string("targetTitle"))
         let mode = args.string("mode") ?? "wikilink"
         let linkText = args.string("linkText") ?? target.title
-        let markdownLink: String
-        if mode == "related_section" {
-            markdownLink = "\n\n## Links relacionados\n- [[\(target.title)]]"
+        let experimentalNativeUI = args.bool("experimentalNativeUI", default: false)
+        var nativeUIResult: MCPValue?
+        var usedIndexOnlyFallback = false
+        if experimentalNativeUI {
+            guard linkText == target.title else {
+                throw NotesError.typed(
+                    code: "invalid_params",
+                    message: "experimentalNativeUI note links require linkText to match the target note title."
+                )
+            }
+            do {
+                nativeUIResult = try await attemptNativeNoteLink(source: source, target: target, mode: mode)
+            } catch let error as NotesError {
+                logger.error(
+                    "notes_link_native_ui",
+                    fields: experimentalUIFallbackLogFields(
+                        noteId: source.id,
+                        code: error.code,
+                        reason: error.details["reason"],
+                        fallback: "sqlite_link_index"
+                    )
+                )
+                nativeUIResult = experimentalUIFallbackValue(
+                    code: error.code,
+                    reason: error.details["reason"],
+                    fallback: "sqlite_link_index"
+                )
+                usedIndexOnlyFallback = true
+            }
         } else {
-            markdownLink = "[[\(linkText)]]"
-        }
+            let markdownLink: String
+            if mode == "related_section" {
+                markdownLink = "\n\n## Links relacionados\n- [[\(target.title)]]"
+            } else {
+                markdownLink = "[[\(linkText)]]"
+            }
 
-        let updatedMarkdown = (source.bodyMarkdown ?? markdown.htmlToMarkdown(source.bodyHTML ?? "")) + "\n\n" + markdownLink
-        let updatedHTML = markdown.markdownToHTML(updatedMarkdown)
-        if let appleId = source.appleNoteId {
-            _ = try await jxa.run(
-                operation: "notes_link",
-                scriptBody: Self.scriptUpdateNote,
-                input: .object(["appleNoteId": .string(appleId), "bodyHTML": .string(updatedHTML)])
-            )
+            let updatedMarkdown = (source.bodyMarkdown ?? markdown.htmlToMarkdown(source.bodyHTML ?? "")) + "\n\n" + markdownLink
+            let updatedHTML = markdown.markdownToHTML(updatedMarkdown)
+            if let appleId = source.appleNoteId {
+                _ = try await jxa.run(
+                    operation: "notes_link",
+                    scriptBody: Self.scriptUpdateNote,
+                    input: .object([
+                        "appleNoteId": .string(appleId),
+                        "title": .string(source.title),
+                        "accountName": source.accountName.map(MCPValue.string) ?? .null,
+                        "folderPath": source.folderPath.map(MCPValue.string) ?? .null,
+                        "bodyHTML": .string(updatedHTML)
+                    ])
+                )
+            }
+            source.bodyMarkdown = updatedMarkdown
+            source.bodyHTML = updatedHTML
+            source.bodyHash = stableHash(updatedHTML)
+            source.indexedAt = isoNow()
+            try await index(source, includeEmbeddings: config.embeddingsEnabled)
         }
-        source.bodyMarkdown = updatedMarkdown
-        source.bodyHTML = updatedHTML
-        source.bodyHash = stableHash(updatedHTML)
-        source.indexedAt = isoNow()
-        try await index(source, includeEmbeddings: config.embeddingsEnabled)
         let link = LinkRecord(
             id: UUID().uuidString,
             sourceNoteId: source.id,
@@ -216,12 +259,19 @@ extension NotesService {
             createdAt: isoNow()
         )
         try store.insertLink(link)
-        return .object([
+        var object: [String: MCPValue] = [
             "sourceNoteId": .string(source.id),
             "targetNoteId": .string(target.id),
             "linkText": .string(linkText),
             "mode": .string(mode)
-        ])
+        ]
+        if usedIndexOnlyFallback {
+            object["indexedOnlyFallback"] = .bool(true)
+        }
+        if let nativeUIResult {
+            object["experimentalNativeUI"] = nativeUIResult
+        }
+        return .object(object)
     }
 
     func backlinksData(_ args: [String: MCPValue]) throws -> MCPValue {

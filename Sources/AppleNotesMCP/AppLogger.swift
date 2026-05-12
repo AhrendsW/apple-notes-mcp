@@ -108,9 +108,12 @@ final class AppLogger: @unchecked Sendable {
             "embeddingdimension",
             "embeddinglanguage",
             "embeddingprovider",
+            "fallback",
             "language",
             "mode",
-            "provider"
+            "nativeapplied",
+            "provider",
+            "reason"
         ].contains(lowerKey)
     }
 

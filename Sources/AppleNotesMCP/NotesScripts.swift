@@ -111,14 +111,68 @@ extension NotesService {
 
     static let scriptUpdateNote = #"""
     var app = notesApp();
-    var found = findNoteById(app, input.appleNoteId);
-    if (!found) {
+    var updated = updateNoteBodyById(app, input.appleNoteId, input.bodyHTML);
+    if (!updated && input.title) {
+      updated = updateNoteBodyByTitle(app, input.title, input.accountName || null, input.folderPath || null, input.bodyHTML);
+    }
+    if (!updated) {
       return fail('note_not_found', 'Apple Notes note not found.', { appleNoteId: input.appleNoteId });
     }
-    found.note.body.set(input.bodyHTML);
-    return ok(noteInfo(found.note, found.accountName, found.folderPath, true));
+    return ok(updated);
   } catch (e) {
     return fail(e.code || 'apple_notes_automation_failed', e.message || String(e), {});
+  }
+}
+"""#
+
+    static let scriptAppendNativeTagsUI = #"""
+    var app = notesApp();
+    var found = findNoteById(app, input.appleNoteId);
+    if (!found) {
+      return fail('note_not_found', 'Apple Notes note not found.', {});
+    }
+    var tags = input.tags || [];
+    var text = '\n';
+    for (var i = 0; i < tags.length; i++) {
+      text += '#' + tags[i] + ' ';
+    }
+    experimentalAppendTextToNote(found.note, text);
+    return ok({
+      appleNoteId: input.appleNoteId,
+      experimentalNativeUI: true,
+      nativeTagAttempted: true,
+      tagCount: tags.length
+    });
+  } catch (e) {
+    return fail(
+      'experimental_native_ui_failed',
+      'Experimental native UI automation failed. Check Accessibility/Automation permissions, Notes focus, keyboard layout, and current macOS Notes UI behavior.',
+      { reason: classifiedUIError(e) }
+    );
+  }
+}
+"""#
+
+    static let scriptAppendNativeNoteLinkUI = #"""
+    var app = notesApp();
+    var found = findNoteById(app, input.sourceAppleNoteId);
+    if (!found) {
+      return fail('note_not_found', 'Apple Notes source note not found.', {});
+    }
+    var prefixText = input.mode === 'related_section' ? '\nLinks relacionados\n' : '\n';
+    experimentalAppendNativeNoteLink(found.note, input.targetTitle, prefixText);
+    return ok({
+      sourceAppleNoteId: input.sourceAppleNoteId,
+      targetAppleNoteId: input.targetAppleNoteId || null,
+      experimentalNativeUI: true,
+      nativeLinkAttempted: true
+    });
+  } catch (e) {
+    return fail(
+      'experimental_native_ui_failed',
+      'Experimental native UI automation failed. Check Accessibility/Automation permissions, Notes focus, duplicate note titles, iCloud sync state, keyboard layout, and current macOS Notes UI behavior.',
+      { reason: classifiedUIError(e) }
+    );
   }
 }
 """#
@@ -206,18 +260,24 @@ extension NotesService {
 
     static let scriptMoveNote = #"""
     var app = notesApp();
-    var found = findNoteById(app, input.appleNoteId);
-    if (!found) {
-      return fail('note_not_found', 'Apple Notes note not found.', { appleNoteId: input.appleNoteId });
-    }
     var account = accountByName(app, input.targetAccountName);
     var folderResult = getFolder(app, account, input.targetFolderPath, input.createFolderIfMissing);
-    found.note.move({ to: folderResult.folder });
-    return ok({
-      appleNoteId: input.appleNoteId,
-      accountName: input.targetAccountName,
-      folderPath: folderResult.path
-    });
+    var moved = moveNoteById(app, input.appleNoteId, folderResult.folder, input.targetAccountName, folderResult.path);
+    if (!moved && input.title) {
+      moved = moveNoteByTitle(
+        app,
+        input.title,
+        input.sourceAccountName || null,
+        input.sourceFolderPath || null,
+        folderResult.folder,
+        input.targetAccountName,
+        folderResult.path
+      );
+    }
+    if (!moved) {
+      return fail('note_not_found', 'Apple Notes note not found.', { appleNoteId: input.appleNoteId });
+    }
+    return ok(moved);
   } catch (e) {
     return fail(e.code || 'apple_notes_automation_failed', e.message || String(e), {});
   }

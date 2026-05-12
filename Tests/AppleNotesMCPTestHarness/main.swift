@@ -330,6 +330,9 @@ runner.test("AppLogger keeps only safe fields and truncates note ids") {
         "duration_ms": "42",
         "noteId": "1234567890abcdef",
         "mode": "full",
+        "nativeApplied": "false",
+        "fallback": "sqlite_metadata",
+        "reason": "note_object_or_ui_element_unavailable",
         "indexed": "7",
         "provider": NaturalLanguageEmbeddingProvider.providerName,
         "embeddingDimension": "640",
@@ -347,6 +350,9 @@ runner.test("AppLogger keeps only safe fields and truncates note ids") {
     try expect(log.contains("duration_ms=42"))
     try expect(log.contains("noteId=1234567890ab"))
     try expect(log.contains("mode=full"))
+    try expect(log.contains("nativeApplied=false"))
+    try expect(log.contains("fallback=sqlite_metadata"))
+    try expect(log.contains("reason=note_object_or_ui_element_unavailable"))
     try expect(log.contains("indexed=7"))
     try expect(log.contains("provider=\(NaturalLanguageEmbeddingProvider.providerName)"))
     try expect(log.contains("embeddingDimension=640"))
@@ -438,6 +444,26 @@ runner.test("Automation stderr redaction does not expose raw stderr") {
 
     try expect(sanitizeAutomationError("Not authorized to send Apple events") == "permission_denied")
     try expect(sanitizeAutomationError("SyntaxError: Expected ;") == "javascript_syntax_error")
+}
+
+runner.test("Update script avoids body read-back after write") {
+    try expect(NotesService.scriptUpdateNote.contains("updateNoteBodyById"))
+    try expect(NotesService.scriptUpdateNote.contains("updateNoteBodyByTitle"))
+    try expect(!NotesService.scriptUpdateNote.contains("return ok(noteInfo"))
+}
+
+runner.test("Move script avoids read-back and supports title fallback") {
+    try expect(NotesService.scriptMoveNote.contains("moveNoteById"))
+    try expect(NotesService.scriptMoveNote.contains("moveNoteByTitle"))
+    try expect(NotesService.scriptMoveNote.contains("sourceFolderPath"))
+    try expect(!NotesService.scriptMoveNote.contains("return ok(noteInfo"))
+}
+
+runner.test("Experimental UI scripts return classified safe reasons") {
+    try expect(NotesService.scriptAppendNativeTagsUI.contains("classifiedUIError"))
+    try expect(NotesService.scriptAppendNativeNoteLinkUI.contains("classifiedUIError"))
+    try expect(!NotesService.scriptAppendNativeTagsUI.contains("String(e)"))
+    try expect(!NotesService.scriptAppendNativeNoteLinkUI.contains("String(e)"))
 }
 
 runner.test("notes_health exposes safe observability fields only") {
@@ -1111,6 +1137,77 @@ runner.test("Extracted links and backlinks use only temporary SQLite data") {
     try expect(backlinks.first?.linkType == "wikilink_detected")
 }
 
+runner.test("Native tag UI failure falls back to SQLite metadata") {
+    let fixture = try StoreFixture(embeddingDimension: 4)
+    let service = NotesService(config: fixture.config, logger: fixture.logger, store: fixture.store)
+    try fixture.store.upsertNote(makeNote(id: "tag-fallback", title: "Tag Fallback", bodyMarkdown: "Body"))
+
+    let data = try waitForAsync {
+        try await service.applyNativeTagsData([
+            "noteId": .string("tag-fallback"),
+            "tags": .array([.string("project"), .string("#reference")]),
+            "experimentalNativeUI": .bool(true)
+        ])
+    }
+
+    let object = try require(data.objectValue)
+    let native = try require(object["experimentalNativeUI"]?.objectValue)
+    try expect(native["nativeApplied"]?.boolValue == false)
+    try expect(native["fallback"]?.stringValue == "sqlite_metadata")
+    try expect(native["limitation"]?.stringValue?.contains("not reliably writable") == true)
+    let note = try require(fixture.store.noteById("tag-fallback"))
+    try expect(note.tags == ["project", "reference"])
+}
+
+runner.test("Native link UI failure falls back to SQLite link index") {
+    let fixture = try StoreFixture(embeddingDimension: 4)
+    let service = NotesService(config: fixture.config, logger: fixture.logger, store: fixture.store)
+    try fixture.store.upsertNote(makeNote(id: "source-native-fallback", title: "Source Native Fallback", bodyMarkdown: "Source"))
+    try fixture.store.upsertNote(makeNote(id: "target-native-fallback", title: "Target Native Fallback", bodyMarkdown: "Target"))
+
+    let data = try waitForAsync {
+        try await service.linkNotesData([
+            "sourceNoteId": .string("source-native-fallback"),
+            "targetNoteId": .string("target-native-fallback"),
+            "mode": .string("related_section"),
+            "experimentalNativeUI": .bool(true)
+        ])
+    }
+
+    let object = try require(data.objectValue)
+    try expect(object["indexedOnlyFallback"]?.boolValue == true)
+    let native = try require(object["experimentalNativeUI"]?.objectValue)
+    try expect(native["nativeApplied"]?.boolValue == false)
+    try expect(native["fallback"]?.stringValue == "sqlite_link_index")
+    try expect(native["limitation"]?.stringValue?.contains("not reliably writable") == true)
+    let target = try require(fixture.store.noteById("target-native-fallback"))
+    let backlinks = try fixture.store.backlinks(targetNote: target)
+    try expect(backlinks.count == 1)
+    try expect(backlinks.first?.sourceNoteId == "source-native-fallback")
+}
+
+runner.test("Native tag UI tool requires explicit experimental opt-in") {
+    let fixture = try StoreFixture(embeddingDimension: 4)
+    let service = NotesService(config: fixture.config, logger: fixture.logger, store: fixture.store)
+
+    let result = try waitForAsync {
+        await service.callTool(
+            name: "notes_apply_native_tags",
+            arguments: [
+                "title": .string("SECRET_NATIVE_TAG_NOTE"),
+                "tags": .array([.string("SECRET_NATIVE_TAG")]),
+                "experimentalNativeUI": .bool(false)
+            ]
+        )
+    }
+
+    try expect(result.1 == true)
+    let log = try String(contentsOfFile: fixture.logPath, encoding: .utf8)
+    try expect(log.contains("operation=notes_apply_native_tags"))
+    try expect(!log.contains("SECRET_NATIVE_TAG_NOTE"))
+    try expect(!log.contains("SECRET_NATIVE_TAG"))
+}
+
 runner.test("Initialize and tools/list over STDIO with temporary config") {
     let fixture = try StoreFixture(embeddingDimension: 4)
     let binaryURL = productsDirectory.appendingPathComponent("AppleNotesMCP")
@@ -1219,6 +1316,7 @@ runner.test("Initialize and tools/list over STDIO with temporary config") {
         "notes_bulk_delete_notes",
         "notes_merge_folders",
         "notes_link",
+        "notes_apply_native_tags",
         "notes_backlinks",
         "notes_extract_links"
     ] {

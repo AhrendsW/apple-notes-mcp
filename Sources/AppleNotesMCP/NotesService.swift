@@ -130,6 +130,8 @@ final class NotesService: @unchecked Sendable {
                 data = try await mergeFoldersData(arguments)
             case "notes_link":
                 data = try await linkNotesData(arguments)
+            case "notes_apply_native_tags":
+                data = try await applyNativeTagsData(arguments)
             case "notes_backlinks":
                 data = try backlinksData(arguments)
             case "notes_extract_links":
@@ -260,14 +262,18 @@ final class NotesService: @unchecked Sendable {
         )
         try await index(note, includeEmbeddings: config.embeddingsEnabled)
 
-        return .object([
+        var object: [String: MCPValue] = [
             "noteId": .string(note.id),
             "appleNoteId": note.appleNoteId.map(MCPValue.string) ?? .null,
             "title": .string(note.title),
             "accountName": note.accountName.map(MCPValue.string) ?? .null,
             "folderPath": note.folderPath.map(MCPValue.string) ?? .null,
             "indexed": .bool(true)
-        ])
+        ]
+        if args.bool("experimentalNativeUI", default: false), !tags.isEmpty {
+            object["experimentalNativeUI"] = try await attemptNativeTags(note: note, tags: tags)
+        }
+        return .object(object)
     }
 
     func readNoteData(_ args: [String: MCPValue]) async throws -> (MCPValue, [String]) {
@@ -459,6 +465,7 @@ final class NotesService: @unchecked Sendable {
 extension NotesService {
     static let knownLimitations = [
         "Apple Notes automation may not expose every UI behavior.",
+        "Native Apple Notes tags and note-to-note links are experimental opt-in visual UI automation only; they are not created through a stable Notes automation API.",
         "Markdown to rich text and HTML to Markdown are best effort.",
         "Apple Notes may simplify ordered lists, links, blockquotes, and code blocks when HTML is read back.",
         "Inaccessible Apple Notes folder references are skipped with warnings; the local folder cache is reconciled from reachable live folders without deleting notes.",

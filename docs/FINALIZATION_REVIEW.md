@@ -323,6 +323,7 @@ Final security checks:
 - Errors are typed and structured.
 - Logs redact content-like fields.
 - The server never reads or writes Apple Notes internal databases.
+- Native Apple Notes tag/link support is explicit opt-in experimental UI automation only and does not use internal Notes databases.
 
 Findings and decisions:
 
@@ -330,6 +331,9 @@ Findings and decisions:
 - Raw `osascript` stderr is no longer returned verbatim. It is classified as permission, JavaScript syntax, or redacted automation stderr to avoid leaking note content, file paths, or system details from automation failures.
 - Folder paths for `notes_create_folder`, `notes_create`, and `notes_move` are normalized through the same folder-path validation used by folder and bulk operations.
 - Tool logging remains allowlist-based and does not record note bodies, Markdown, HTML, titles, search queries, prompt arguments, attachment paths, or attachment contents.
+- Experimental native UI automation uses Notes plus System Events only when `experimentalNativeUI=true`. It is documented as visual/interactive automation, can fail or partially type into the visible note, and should be manually validated only in a dedicated test folder.
+- Experimental native UI failures return coarse safe reasons, not raw UI automation errors. Tag and link tools fall back to MCP-owned SQLite metadata/link records where possible. Note update writes avoid immediate full-body read-back to reduce `Can't get object` failures from invalidated Apple Notes object references.
+- Note moves resolve the target folder before locating the note, avoid post-move body read-back, and include title/account/folder fallback matching for stale Apple note ids.
 - `notes_health` returns status/config/count/embedding/permission/limitation metadata only. It intentionally includes local `databasePath` and `logPath` for diagnostics, but never note bodies, note titles, search queries, prompt arguments, attachment contents, or raw HTML.
 - `notes_list_folders` returns folder id/account/path/parent/count metadata only. Folder names and paths are exposed by design because listing folders is the tool's purpose; it does not return note content.
 - Destructive operations require explicit confirmation: note delete, folder delete, folder merge, and bulk delete with `dryRun=false`. Bulk delete defaults to `dryRun=true`.

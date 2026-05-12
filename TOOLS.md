@@ -118,6 +118,7 @@ Arguments:
 - `title`: required title.
 - `bodyMarkdown`: required Markdown body.
 - `tags`: optional string array stored in SQLite metadata.
+- `experimentalNativeUI`: optional boolean. When `true`, attempts to append `tags` as native Apple Notes tags through visual UI automation after creating the note.
 - `preserveFormatting`: optional, currently accepted by schema.
 
 ### `notes_read`
@@ -382,6 +383,26 @@ Arguments:
 - `targetTitle`: optional target title.
 - `linkText`: optional displayed link text.
 - `mode`: required, `wikilink` or `related_section`.
+- `experimentalNativeUI`: optional boolean. When `true`, attempts to create a native Apple Notes note-to-note link through visual UI automation instead of writing a Markdown `[[wikilink]]`.
+
+Experimental native UI mode requires `linkText` to match the target note title. Apple Notes' `>>` shortcut uses the target title as the link text.
+
+If visual automation fails, the tool records the relationship in the SQLite link index and returns `nativeApplied=false`, `fallback=sqlite_link_index`, and a concise `limitation` explaining that Apple Notes native tags and note links are not reliably writable through supported automation.
+
+### `notes_apply_native_tags`
+
+Experimentally appends native Apple Notes tags through visual UI automation.
+
+Arguments:
+
+- `noteId`: optional note id.
+- `title`: optional exact title.
+- `tags`: required string array. Tags must be single words using letters, numbers, hyphens, or underscores.
+- `experimentalNativeUI`: required boolean and must be `true`.
+
+This tool is intentionally opt-in. It uses Notes plus System Events to focus the note and type `#tag ` text so Apple Notes may convert it to native tags.
+
+If visual automation fails, the tool still stores the tags in SQLite metadata and returns `nativeApplied=false`, `fallback=sqlite_metadata`, and a concise `limitation` explaining that Apple Notes native tags and note links are not reliably writable through supported automation. It may also return a coarse safe `reason` such as `accessibility_or_automation_permission_denied`, `note_object_or_ui_element_unavailable`, or `redacted_ui_automation_error`. It does not return raw UI automation errors because they can contain local UI state.
 
 ### `notes_backlinks`
 
@@ -422,7 +443,12 @@ Implemented MCP prompts:
 ## Known Apple Notes Automation Limits
 
 - Apple Notes automation may simplify rich formatting on read-back.
+- Native Apple Notes tags and native note-to-note links are not exposed through the stable Notes automation dictionary. Experimental native UI tools simulate visible app interaction through System Events and require `experimentalNativeUI=true`.
+- Experimental native UI automation can fail if Accessibility/Automation permissions are missing, Notes focus changes, the wrong note is selected, note titles are duplicated, iCloud sync is delayed, the keyboard layout or app language differs, the user interacts with mouse/keyboard during the run, or macOS changes Notes UI behavior. A failed run may partially type into the visible note.
+- When experimental native UI automation fails, tag and link tools fall back to MCP-owned SQLite metadata/link records where possible and report `nativeApplied=false`.
+- Note update/write paths avoid reading the full note body back immediately after mutation because Apple Notes can invalidate note object references and raise `Can't get object`.
 - Apple Notes can expose stale or inaccessible folder references after folder moves/deletes; `notes_list_folders` skips them with warnings and reconciles the local folder cache from reachable folders. If a warning persists for the same branch, repair or remove that branch in Apple Notes.
+- Note moves can fail when Apple Notes exposes stale note or folder object references. The implementation resolves the target folder before moving, avoids post-move body read-back, and falls back to title/account/folder matching when the cached Apple note id is not enough.
 - Ordered lists, links, blockquotes, and code blocks may not round-trip exactly.
 - Native checklist state may not round-trip perfectly.
 - Real attachments may fall back to `file://` links.

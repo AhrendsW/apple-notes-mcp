@@ -99,6 +99,7 @@ private func toolDefinitions() -> [Tool] {
             "title": stringSchema(),
             "bodyMarkdown": stringSchema(),
             "tags": arraySchema(),
+            "experimentalNativeUI": boolSchema(defaultValue: false),
             "preserveFormatting": boolSchema(defaultValue: true)
         ], required: ["title", "bodyMarkdown"]),
         tool("notes_read", "Read a note by noteId or title.", [
@@ -177,8 +178,15 @@ private func toolDefinitions() -> [Tool] {
             "targetNoteId": stringSchema(required: false),
             "targetTitle": stringSchema(required: false),
             "linkText": stringSchema(required: false),
-            "mode": enumSchema(["wikilink", "related_section"])
+            "mode": enumSchema(["wikilink", "related_section"]),
+            "experimentalNativeUI": boolSchema(defaultValue: false)
         ], required: ["mode"]),
+        tool("notes_apply_native_tags", "Experimentally append Apple Notes native tags through visual UI automation.", [
+            "noteId": stringSchema(required: false),
+            "title": stringSchema(required: false),
+            "tags": arraySchema(),
+            "experimentalNativeUI": boolSchema(defaultValue: false)
+        ], required: ["tags", "experimentalNativeUI"]),
         tool("notes_backlinks", "Return notes that link to a target note.", [
             "noteId": stringSchema(required: false),
             "title": stringSchema(required: false)

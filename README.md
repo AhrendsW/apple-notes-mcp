@@ -200,6 +200,7 @@ Implemented MCP tools:
 - `notes_bulk_delete_notes`
 - `notes_merge_folders`
 - `notes_link`
+- `notes_apply_native_tags`
 - `notes_backlinks`
 - `notes_extract_links`
 
@@ -337,6 +338,22 @@ Reads return raw HTML and best-effort Markdown.
 
 Manual validation on macOS on 2026-05-11 showed that Apple Notes accepts the generated HTML but may simplify it when read back through automation: ordered lists can return as bullet lists, links can return as underlined text without the URL, and blockquotes/code blocks can return as plain or monospace text rather than exact Markdown structure.
 
+### Experimental Native Notes UI Automation
+
+Native Apple Notes tags and native note-to-note links are not exposed through the stable Notes automation dictionary used by the normal tools. The stable path can write HTML body content and maintain SQLite metadata/link records, but it cannot reliably create Apple Notes UI-native tags or internal note links.
+
+For local personal use, this server provides an explicit opt-in experimental path:
+
+- `notes_create` can try to append native tags from the `tags` array when `experimentalNativeUI=true`.
+- `notes_apply_native_tags` can try to append native tags to an existing note when `experimentalNativeUI=true`.
+- `notes_link` can try to append a native note-to-note link when `experimentalNativeUI=true`.
+
+This path uses visual/interactive UI automation through Notes plus System Events. It simulates focusing the note, typing text such as `#tag ` or `>>`, waiting for Notes UI popovers, and pressing Return. It is not an API-stable operation.
+
+Known failure modes include missing Accessibility/Automation permissions, Notes not focusing the expected window, the wrong note being selected, duplicate note titles, iCloud sync latency, localized or changed macOS UI behavior, keyboard layout differences, user mouse/keyboard interaction during the run, and macOS updates changing Notes popovers or shortcuts. A failed run may partially type text into the visible note before the tool reports an error.
+
+When visual automation fails, the tools degrade to MCP-owned state where possible: `notes_apply_native_tags` stores tags in SQLite metadata, and `notes_link` records the relationship in the SQLite link index. The response includes `nativeApplied=false`, a concise `limitation`, a coarse safe `reason`, and a `fallback` value such as `sqlite_metadata` or `sqlite_link_index`. Raw UI errors are intentionally not exposed because they can include local UI state. Stable write paths avoid reading the full note body back immediately after mutation because Apple Notes can invalidate note object references and raise `Can't get object`.
+
 ## Resources
 
 Implemented MCP resources:
@@ -386,6 +403,7 @@ The server does not log complete note bodies, complete Markdown, complete HTML, 
 - No LaunchAgent by default
 - Does not read or write Apple Notes internal databases
 - Uses Apple Notes automation through `osascript`
+- Uses visual System Events UI automation only when explicitly requested with `experimentalNativeUI=true`
 - Sends JXA input as JSON over stdin and expects structured JSON envelopes in response
 - Does not place note content in shell command arguments
 - Validates attachment paths before linking
@@ -410,6 +428,8 @@ Manual Apple Notes validation is documented in `docs/TEST_PLAN.md` and must use 
 ## Known Limitations
 
 - Apple Notes automation may not expose 100% of UI behavior.
+- Native Apple Notes tags and native note-to-note links are experimental opt-in UI automation only, not stable API automation; they may fail or partially type content into the visible note.
+- Moving notes can fail when Apple Notes exposes stale note or folder object references; if direct movement remains unavailable, recreate-in-destination is the safe manual fallback.
 - Apple Notes can expose stale or inaccessible folder references after folder moves/deletes; `notes_list_folders` skips them with warnings and reconciles the local folder cache from reachable folders. If a warning persists for the same branch, repair or remove that branch in Apple Notes.
 - Rich formatting is best effort.
 - Markdown round-trip through Apple Notes may simplify ordered lists, links, blockquotes, and code blocks.

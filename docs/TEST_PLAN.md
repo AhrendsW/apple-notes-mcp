@@ -248,6 +248,7 @@ Pass criteria:
 - `notes_extract_links` records detected link.
 - `notes_backlinks` returns source note.
 - Duplicate extraction does not create duplicate detected links.
+- `notes_apply_native_tags` rejects calls unless `experimentalNativeUI=true` and does not log note titles or tags.
 
 ### Cross-Process Lock
 
@@ -487,11 +488,24 @@ Use notes_extract_links on "MCP Manual Test".
 Use notes_backlinks on "Target Note".
 ```
 
+Optional experimental native UI prompts:
+
+```text
+Use notes_apply_native_tags on "MCP Manual Test" with tags ["mcp-test"] and experimentalNativeUI true.
+```
+
+```text
+Use notes_link from "MCP Manual Test" to "Target Note" with mode "wikilink" and experimentalNativeUI true.
+```
+
 Pass criteria:
 
 - Wikilink is added without corrupting body.
 - Extracted links are stored.
 - Backlinks show the source note.
+- Experimental native UI steps either create Apple Notes native UI tags/links or return `nativeApplied=false` with an MCP fallback such as `sqlite_metadata` or `sqlite_link_index`. Partial typed text is possible and must be checked manually in the dedicated test folder only.
+- If native UI automation fails, details may include a safe coarse `reason`; raw UI automation errors must not be exposed.
+- `notes_update` should not fail only because Apple Notes cannot read the mutated note object back immediately after writing.
 
 ### Move
 
@@ -505,6 +519,7 @@ Pass criteria:
 
 - Target folder is created if supported.
 - Note moves or returns a typed, documented automation limitation.
+- Move implementation avoids post-move body read-back and can fall back to title/account/folder matching when Apple Notes object references are stale.
 
 ### Delete
 

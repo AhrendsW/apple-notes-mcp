@@ -131,6 +131,80 @@ function notesApp() {
   return app;
 }
 
+function sleepSeconds(seconds) {
+  $.NSThread.sleepForTimeInterval(seconds);
+}
+
+function experimentalFocusNoteForTyping(note) {
+  var app = notesApp();
+  app.activate();
+  sleepSeconds(0.3);
+  app.show(note);
+  sleepSeconds(1.0);
+  var events = Application('System Events');
+  events.includeStandardAdditions = true;
+  events.keyCode(36);
+  sleepSeconds(0.4);
+  events.keyCode(125, { using: ['command down'] });
+  sleepSeconds(0.4);
+  return events;
+}
+
+function safeUpdatedNoteInfo(note, accountName, folderPath, bodyHTML) {
+  return {
+    appleNoteId: valueOrNull(function(){ return note.id(); }),
+    title: valueOrNull(function(){ return note.name(); }) || '',
+    accountName: accountName || null,
+    folderPath: folderPath || null,
+    bodyHTML: bodyHTML,
+    createdAt: dateString(valueOrNull(function(){ return note.creationDate(); })),
+    updatedAt: dateString(valueOrNull(function(){ return note.modificationDate(); }))
+  };
+}
+
+function classifiedUIError(e) {
+  var text = '';
+  try { text = String((e && (e.message || e.toString())) || ''); } catch (_) { text = ''; }
+  var lower = text.toLowerCase();
+  if (lower.indexOf('not authorized') >= 0
+      || lower.indexOf('not permitted') >= 0
+      || lower.indexOf('privacy') >= 0
+      || lower.indexOf('assistive') >= 0
+      || lower.indexOf('accessibility') >= 0) {
+    return 'accessibility_or_automation_permission_denied';
+  }
+  if (lower.indexOf("can't get object") >= 0 || lower.indexOf('invalid index') >= 0) {
+    return 'note_object_or_ui_element_unavailable';
+  }
+  if (lower.indexOf('system events') >= 0) {
+    return 'system_events_unavailable';
+  }
+  if (lower.length === 0) {
+    return 'unknown_ui_automation_error';
+  }
+  return 'redacted_ui_automation_error';
+}
+
+function experimentalAppendTextToNote(note, text) {
+  var events = experimentalFocusNoteForTyping(note);
+  events.keystroke(text);
+  sleepSeconds(0.4);
+}
+
+function experimentalAppendNativeNoteLink(note, targetTitle, prefixText) {
+  var events = experimentalFocusNoteForTyping(note);
+  if (prefixText && prefixText.length > 0) {
+    events.keystroke(prefixText);
+    sleepSeconds(0.2);
+  }
+  events.keystroke('>>');
+  sleepSeconds(0.5);
+  events.keystroke(targetTitle);
+  sleepSeconds(0.7);
+  events.keyCode(36);
+  sleepSeconds(0.5);
+}
+
 function ok(data) {
   return JSON.stringify({ ok: true, data: data || {} });
 }
@@ -330,6 +404,122 @@ function findNoteByIdInFolder(folder, accountName, folderPath, appleNoteId) {
     if (found) { return found; }
   }
   return null;
+}
+
+function updateNoteBodyById(app, appleNoteId, bodyHTML) {
+  var accounts = app.accounts();
+  for (var i = 0; i < accounts.length; i++) {
+    var accountName = valueOrNull(function(){ return accounts[i].name(); });
+    if (!accountName) { continue; }
+    var folders = foldersOrEmpty(accounts[i], null, '');
+    for (var j = 0; j < folders.length; j++) {
+      var folderName = valueOrNull(function(){ return folders[j].name(); });
+      if (!folderName) { continue; }
+      var updated = updateNoteBodyByIdInFolder(folders[j], String(accountName), String(folderName), appleNoteId, bodyHTML);
+      if (updated) { return updated; }
+    }
+  }
+  return null;
+}
+
+function updateNoteBodyByTitle(app, title, accountName, folderPath, bodyHTML) {
+  var matches = findNotesByTitle(app, title);
+  var filtered = [];
+  for (var i = 0; i < matches.length; i++) {
+    if (accountName && matches[i].accountName !== accountName) { continue; }
+    if (folderPath && matches[i].folderPath !== folderPath) { continue; }
+    filtered.push(matches[i]);
+  }
+  if (filtered.length === 0) { return null; }
+  if (filtered.length > 1) {
+    throw {
+      code: 'ambiguous_note_title',
+      message: 'Multiple Apple Notes notes match the title fallback. Use noteId after a fresh sync.'
+    };
+  }
+  filtered[0].note.body.set(bodyHTML);
+  return safeUpdatedNoteInfo(filtered[0].note, filtered[0].accountName, filtered[0].folderPath, bodyHTML);
+}
+
+function updateNoteBodyByIdInFolder(folder, accountName, folderPath, appleNoteId, bodyHTML) {
+  var notes = valueOrEmptyArray(function(){ return folder.notes(); });
+  for (var i = 0; i < notes.length; i++) {
+    var note = notes[i];
+    if (valueOrNull(function(){ return note.id(); }) === appleNoteId) {
+      note.body.set(bodyHTML);
+      return safeUpdatedNoteInfo(note, accountName, folderPath, bodyHTML);
+    }
+  }
+  var folders = foldersOrEmpty(folder, null, folderPath);
+  for (var j = 0; j < folders.length; j++) {
+    var child = folders[j];
+    var childName = valueOrNull(function(){ return child.name(); });
+    if (!childName) { continue; }
+    var updated = updateNoteBodyByIdInFolder(child, accountName, folderPath + '/' + childName, appleNoteId, bodyHTML);
+    if (updated) { return updated; }
+  }
+  return null;
+}
+
+function moveNoteById(app, appleNoteId, targetFolder, targetAccountName, targetFolderPath) {
+  var accounts = app.accounts();
+  for (var i = 0; i < accounts.length; i++) {
+    var accountName = valueOrNull(function(){ return accounts[i].name(); });
+    if (!accountName) { continue; }
+    var folders = foldersOrEmpty(accounts[i], null, '');
+    for (var j = 0; j < folders.length; j++) {
+      var folderName = valueOrNull(function(){ return folders[j].name(); });
+      if (!folderName) { continue; }
+      var moved = moveNoteByIdInFolder(folders[j], appleNoteId, targetFolder, targetAccountName, targetFolderPath);
+      if (moved) { return moved; }
+    }
+  }
+  return null;
+}
+
+function moveNoteByIdInFolder(folder, appleNoteId, targetFolder, targetAccountName, targetFolderPath) {
+  var notes = valueOrEmptyArray(function(){ return folder.notes(); });
+  for (var i = 0; i < notes.length; i++) {
+    var note = notes[i];
+    if (valueOrNull(function(){ return note.id(); }) === appleNoteId) {
+      note.move({ to: targetFolder });
+      return {
+        appleNoteId: appleNoteId,
+        accountName: targetAccountName,
+        folderPath: targetFolderPath
+      };
+    }
+  }
+  var folders = foldersOrEmpty(folder, null, '');
+  for (var j = 0; j < folders.length; j++) {
+    var moved = moveNoteByIdInFolder(folders[j], appleNoteId, targetFolder, targetAccountName, targetFolderPath);
+    if (moved) { return moved; }
+  }
+  return null;
+}
+
+function moveNoteByTitle(app, title, sourceAccountName, sourceFolderPath, targetFolder, targetAccountName, targetFolderPath) {
+  var matches = findNotesByTitle(app, title);
+  var filtered = [];
+  for (var i = 0; i < matches.length; i++) {
+    if (sourceAccountName && matches[i].accountName !== sourceAccountName) { continue; }
+    if (sourceFolderPath && matches[i].folderPath !== sourceFolderPath) { continue; }
+    filtered.push(matches[i]);
+  }
+  if (filtered.length === 0) { return null; }
+  if (filtered.length > 1) {
+    throw {
+      code: 'ambiguous_note_title',
+      message: 'Multiple Apple Notes notes match the move fallback. Use noteId after a fresh sync.'
+    };
+  }
+  var appleNoteId = valueOrNull(function(){ return filtered[0].note.id(); });
+  filtered[0].note.move({ to: targetFolder });
+  return {
+    appleNoteId: appleNoteId,
+    accountName: targetAccountName,
+    folderPath: targetFolderPath
+  };
 }
 
 function findNotesByTitle(app, title) {
