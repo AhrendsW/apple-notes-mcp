@@ -1,0 +1,13 @@
+.build/
+.swiftpm/
+DerivedData/
+Package.pins
+.DS_Store
+*.swp
+*.tmp
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+AGENTS.md
+.codex/
